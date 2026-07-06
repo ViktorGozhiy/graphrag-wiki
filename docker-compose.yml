@@ -26,7 +26,17 @@ services:
       - neo4j_logs:/logs
     restart: unless-stopped
 
+  ollama:
+    image: ollama/ollama:0.31.1
+    container_name: graphrag-ollama
+    ports:
+      - "11434:11434"   # REST API (http://localhost:11434)
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+
 volumes:
   qdrant_storage:
   neo4j_data:
   neo4j_logs:
+  ollama_models:
