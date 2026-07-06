@@ -8,3 +8,6 @@ VECTOR_SIZE = 384
 
 QDRANT_URL = "http://localhost:6333"
 QDRANT_COLLECTION = "wiki_chunks"
+
+OLLAMA_URL = "http://localhost:11434"
+OLLAMA_MODEL = "gemma4:12b"
