@@ -1,9 +1,21 @@
 [project]
 name = "graphrag-wiki"
 version = "0.1.0"
-description = "Add your description here"
+description = "Hands-on GraphRAG over a Wikipedia corpus"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "requests>=2.34.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
 ]

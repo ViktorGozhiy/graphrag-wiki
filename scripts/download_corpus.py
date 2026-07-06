@@ -2,11 +2,12 @@
 # ABOUTME: Seeds from one article, follows in-text links, saves plain text + metadata as JSONL.
 
 import json
-import re
 import time
 from pathlib import Path
 
 import requests
+
+from graphrag_wiki.wikitext import clean_extract
 
 API = "https://en.wikipedia.org/w/api.php"
 UA = "graphrag-wiki/0.1 (educational GraphRAG learning project)"
@@ -17,28 +18,6 @@ OUT_FILE = Path("data/raw/corpus.jsonl")
 
 # Meta/list pages are entity-poor and useless for a knowledge graph.
 SKIP_PREFIXES = ("List of", "Timeline of", "Outline of", "Index of", "Bibliography of")
-
-# Trailing sections hold citations and links, not narrative — noise for a graph.
-BOILERPLATE_SECTIONS = {
-    "see also", "references", "notes", "citations", "sources", "bibliography",
-    "further reading", "external links", "footnotes", "works cited",
-    "primary sources", "general references", "explanatory notes",
-    "notes and references",
-}
-
-HEADING = re.compile(r"^=+\s*(.+?)\s*=+\s*$", re.MULTILINE)
-
-
-def clean_text(text):
-    """Drop trailing citation/link sections and strip heading markers."""
-    for match in HEADING.finditer(text):
-        if match.group(1).strip().lower() in BOILERPLATE_SECTIONS:
-            text = text[:match.start()]
-            break
-    text = HEADING.sub(r"\1", text)
-    text = re.sub(r"<[a-zA-Z/][^>\n]*>", "", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
 
 session = requests.Session()
 session.headers.update({"User-Agent": UA})
@@ -89,7 +68,7 @@ def fetch_article(title):
     if not pages:
         return None
     page = pages[0]
-    text = clean_text(page.get("extract", ""))
+    text = clean_extract(page.get("extract", ""))
     if page.get("missing") or not text:
         return None
     categories = [c["title"].removeprefix("Category:") for c in page.get("categories", [])]
