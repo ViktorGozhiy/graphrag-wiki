@@ -5,6 +5,8 @@ description = "Hands-on GraphRAG over a Wikipedia corpus"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastembed>=0.8.0",
+    "qdrant-client>=1.18.0",
     "requests>=2.34.2",
 ]
 
