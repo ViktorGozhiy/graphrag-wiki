@@ -1,7 +1,19 @@
 # ABOUTME: Tests for the knowledge-graph extraction schema (node and relation types).
 # ABOUTME: Guards the source/target invariant and that the prompt block exposes every type.
 
-from graphrag_wiki.graph_schema import NODE_TYPES, RELATION_TYPES, schema_prompt_block
+from graphrag_wiki.graph_schema import (
+    NODE_TYPES,
+    RELATION_TYPES,
+    node_types_block,
+    schema_prompt_block,
+)
+
+
+def test_node_types_block_lists_nodes_without_relations():
+    block = node_types_block()
+    for node_type in NODE_TYPES:
+        assert node_type in block
+    assert "RULED" not in block and "->" not in block
 
 
 def test_relation_endpoints_are_valid_node_types():

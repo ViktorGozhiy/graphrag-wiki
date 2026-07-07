@@ -2,25 +2,38 @@
 # ABOUTME: Covers well-formed pass-through and every rejection reason; the LLM call is exercised live.
 
 from graphrag_wiki.graph_extraction import (
-    EXTRACTION_FORMAT,
-    build_prompt,
+    build_entity_prompt,
+    build_relation_prompt,
+    relation_format,
     validate,
 )
-from graphrag_wiki.graph_schema import NODE_TYPES, RELATION_TYPES
+from graphrag_wiki.graph_schema import RELATION_TYPES
 
 
-def test_build_prompt_embeds_schema_and_passage():
-    prompt = build_prompt("Caracalla granted citizenship in 212.")
-    assert "Person" in prompt and "ISSUED" in prompt  # schema vocabulary present
+def test_entity_prompt_embeds_node_types_and_passage():
+    prompt = build_entity_prompt("Caracalla granted citizenship in 212.")
+    assert "Person" in prompt and "Concept" in prompt  # node vocabulary present
     assert "Caracalla granted citizenship in 212." in prompt  # passage present
 
 
-def test_extraction_format_enums_match_schema_vocabulary():
-    props = EXTRACTION_FORMAT["properties"]
-    ent_enum = props["entities"]["items"]["properties"]["type"]["enum"]
-    rel_enum = props["relations"]["items"]["properties"]["relation"]["enum"]
-    assert set(ent_enum) == set(NODE_TYPES)
-    assert set(rel_enum) == set(RELATION_TYPES)
+def test_relation_prompt_lists_entities_with_types_schema_and_passage():
+    entities = [
+        {"name": "Caracalla", "type": "Person", "description": "..."},
+        {"name": "citizenship", "type": "Concept", "description": "..."},
+    ]
+    prompt = build_relation_prompt("Caracalla granted citizenship.", entities)
+    assert "Caracalla" in prompt and "citizenship" in prompt  # the fixed entity list
+    assert "Person" in prompt and "Concept" in prompt  # their types
+    assert "GRANTED" in prompt  # relation schema present
+    assert "Caracalla granted citizenship." in prompt  # passage present
+
+
+def test_relation_format_constrains_endpoints_to_given_entities():
+    fmt = relation_format(["Caracalla", "citizenship"])
+    item = fmt["properties"]["relations"]["items"]["properties"]
+    assert item["source"]["enum"] == ["Caracalla", "citizenship"]
+    assert item["target"]["enum"] == ["Caracalla", "citizenship"]
+    assert set(item["relation"]["enum"]) == set(RELATION_TYPES)
 
 
 def test_validate_keeps_well_formed_entities_and_relations():

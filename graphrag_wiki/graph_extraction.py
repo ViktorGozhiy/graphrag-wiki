@@ -1,31 +1,43 @@
-# ABOUTME: Extracts typed entities and relations from a chunk via a schema-constrained LLM call.
-# ABOUTME: Builds the prompt, enforces the schema vocabulary in the JSON output, and validates triples.
+# ABOUTME: Extracts typed entities then relations from a chunk via two schema-constrained LLM calls.
+# ABOUTME: Pass two restricts relation endpoints to the entities pass one declared, then validates triples.
 
 import json
 
 import requests
 
 from graphrag_wiki.config import OLLAMA_MODEL, OLLAMA_URL
-from graphrag_wiki.graph_schema import NODE_TYPES, RELATION_TYPES, schema_prompt_block
+from graphrag_wiki.graph_schema import (
+    NODE_TYPES,
+    RELATION_TYPES,
+    node_types_block,
+    schema_prompt_block,
+)
 
-PROMPT_TEMPLATE = (
-    "You extract a knowledge graph from a passage about ancient Rome. Use ONLY "
-    "the node and relation types listed below. If a relation does not fit one of "
-    "the listed types, omit it — never invent a type.\n\n"
-    "{schema}\n\n"
-    "List as entities everything you will connect, including abstract concepts "
-    "(institutions, rights, practices, ideas) such as citizenship or taxation. "
-    "For each entity give: name (as it appears in the passage), type (from the "
-    "list), and a one-sentence description grounded in the passage.\n\n"
-    "For each relation give: source, relation (from the list), target, and a "
-    "one-sentence description. The source and target MUST both be names you "
-    "listed in entities — if either is missing, add it as an entity or omit the "
-    "relation. Use MEMBER_OF when a person belongs to a body or class; use "
-    "PART_OF only when a body or place sits inside a larger body or place.\n\n"
+ENTITY_PROMPT_TEMPLATE = (
+    "You extract the entities of a knowledge graph from a passage about ancient "
+    "Rome. Use ONLY these node types.\n\n"
+    "{nodes}\n\n"
+    "List every entity that matters, including abstract concepts (institutions, "
+    "rights, practices, ideas) such as citizenship or taxation. For each give: "
+    "name (as it appears in the passage), type (from the list), and a one-sentence "
+    "description grounded in the passage.\n\n"
     "Passage:\n{text}\n"
 )
 
-EXTRACTION_FORMAT = {
+RELATION_PROMPT_TEMPLATE = (
+    "You extract the relations of a knowledge graph from a passage about ancient "
+    "Rome. Use ONLY the relation types below, and connect ONLY the listed "
+    "entities.\n\n"
+    "{schema}\n\n"
+    "Entities (name — type):\n{entities}\n\n"
+    "For each relation give: source and target (both from the entity list), "
+    "relation (from the list), and a one-sentence description. Add a relation "
+    "only when the source and target types match one of the allowed directions "
+    "above; otherwise omit it.\n\n"
+    "Passage:\n{text}\n"
+)
+
+ENTITY_FORMAT = {
     "type": "object",
     "properties": {
         "entities": {
@@ -40,26 +52,41 @@ EXTRACTION_FORMAT = {
                 "required": ["name", "type", "description"],
             },
         },
-        "relations": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "source": {"type": "string"},
-                    "relation": {"type": "string", "enum": list(RELATION_TYPES)},
-                    "target": {"type": "string"},
-                    "description": {"type": "string"},
-                },
-                "required": ["source", "relation", "target", "description"],
-            },
-        },
     },
-    "required": ["entities", "relations"],
+    "required": ["entities"],
 }
 
 
-def build_prompt(text):
-    return PROMPT_TEMPLATE.format(schema=schema_prompt_block(), text=text)
+def relation_format(entity_names):
+    """JSON schema for pass two: endpoints are constrained to the declared entities."""
+    return {
+        "type": "object",
+        "properties": {
+            "relations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string", "enum": entity_names},
+                        "relation": {"type": "string", "enum": list(RELATION_TYPES)},
+                        "target": {"type": "string", "enum": entity_names},
+                        "description": {"type": "string"},
+                    },
+                    "required": ["source", "relation", "target", "description"],
+                },
+            },
+        },
+        "required": ["relations"],
+    }
+
+
+def build_entity_prompt(text):
+    return ENTITY_PROMPT_TEMPLATE.format(nodes=node_types_block(), text=text)
+
+
+def build_relation_prompt(text, entities):
+    listing = "\n".join(f"- {e['name']} — {e['type']}" for e in entities)
+    return RELATION_PROMPT_TEMPLATE.format(schema=schema_prompt_block(), entities=listing, text=text)
 
 
 def validate(raw):
@@ -103,19 +130,31 @@ def validate(raw):
     return entities, relations, rejects
 
 
-def extract(chunk_id, text):
-    """Extract validated entities and relations from one chunk of text."""
+def _generate(prompt, output_format):
     response = requests.post(
         f"{OLLAMA_URL}/api/generate",
         json={
             "model": OLLAMA_MODEL,
-            "prompt": build_prompt(text),
-            "format": EXTRACTION_FORMAT,
+            "prompt": prompt,
+            "format": output_format,
             "stream": False,
+            "options": {"temperature": 0},
         },
         timeout=900,
     )
     response.raise_for_status()
-    raw = json.loads(response.json()["response"])
-    entities, relations, rejects = validate(raw)
+    return json.loads(response.json()["response"])
+
+
+def extract(chunk_id, text):
+    """Extract validated entities and relations from one chunk in two passes."""
+    entities = _generate(build_entity_prompt(text), ENTITY_FORMAT).get("entities", [])
+    names = list(dict.fromkeys(e["name"].strip() for e in entities if e.get("name", "").strip()))
+
+    relations = []
+    if names:
+        raw_relations = _generate(build_relation_prompt(text, entities), relation_format(names))
+        relations = raw_relations.get("relations", [])
+
+    entities, relations, rejects = validate({"entities": entities, "relations": relations})
     return {"chunk_id": chunk_id, "entities": entities, "relations": relations, "rejects": rejects}

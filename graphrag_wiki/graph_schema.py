@@ -78,13 +78,17 @@ def _endpoints(node_types):
     return " | ".join(node_types)
 
 
-def schema_prompt_block():
-    """Render the schema as a text block for the extraction prompt."""
+def node_types_block():
+    """Render the node types as a text block for the entity-extraction prompt."""
     lines = ["Node types:"]
     for name, description in NODE_TYPES.items():
         lines.append(f"- {name}: {description}")
-    lines.append("")
-    lines.append("Relation types (source -> target):")
+    return "\n".join(lines)
+
+
+def schema_prompt_block():
+    """Render node and relation types as a text block for the extraction prompt."""
+    lines = [node_types_block(), "", "Relation types (source -> target):"]
     for name, spec in RELATION_TYPES.items():
         arrow = f"{_endpoints(spec['sources'])} -> {_endpoints(spec['targets'])}"
         lines.append(f"- {name} ({arrow}): {spec['description']}")
