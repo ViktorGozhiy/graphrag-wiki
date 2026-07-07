@@ -130,20 +130,31 @@ def validate(raw):
     return entities, relations, rejects
 
 
+GENERATE_ATTEMPTS = 3
+
+
 def _generate(prompt, output_format):
-    response = requests.post(
-        f"{OLLAMA_URL}/api/generate",
-        json={
-            "model": OLLAMA_MODEL,
-            "prompt": prompt,
-            "format": output_format,
-            "stream": False,
-            "options": {"temperature": 0},
-        },
-        timeout=900,
-    )
-    response.raise_for_status()
-    return json.loads(response.json()["response"])
+    # Temperature 0 gives clean, deterministic JSON; a repeat would reproduce a decode
+    # failure verbatim, so retries warm up slightly to escape a malformed generation.
+    error = None
+    for attempt in range(GENERATE_ATTEMPTS):
+        response = requests.post(
+            f"{OLLAMA_URL}/api/generate",
+            json={
+                "model": OLLAMA_MODEL,
+                "prompt": prompt,
+                "format": output_format,
+                "stream": False,
+                "options": {"temperature": 0 if attempt == 0 else 0.4},
+            },
+            timeout=900,
+        )
+        response.raise_for_status()
+        try:
+            return json.loads(response.json()["response"])
+        except json.JSONDecodeError as decode_error:
+            error = decode_error
+    raise error
 
 
 def extract(chunk_id, text):

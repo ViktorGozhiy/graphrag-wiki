@@ -5,9 +5,10 @@ Wikipedia corpus, working toward GraphRAG. It is a learning project: each retrie
 implemented transparently so the mechanics are easy to read and compare.
 
 **Current state:** a working baseline RAG — hybrid retrieval (dense vectors + BM25 fused with
-Reciprocal Rank Fusion) feeding a locally-run LLM that answers with citations.
-**Planned next:** a knowledge-graph layer (entity/relation extraction into Neo4j) — the "Graph" in
-GraphRAG. Neo4j already runs in the stack for that step.
+Reciprocal Rank Fusion) feeding a locally-run LLM that answers with citations. Knowledge-graph
+extraction (typed entities and relations per chunk) is implemented and runs through the same LLM.
+**Planned next:** load the extracted graph into Neo4j and add graph-aware retrieval — the "Graph"
+in GraphRAG. Neo4j already runs in the stack for that step.
 
 ## How it works
 
@@ -84,6 +85,23 @@ uv run python scripts/ask.py "why did the western roman empire fall"
 > Inference runs on CPU by default. The first `ask.py` call loads the model into memory; expect
 > tens of seconds per answer.
 
+## Knowledge graph extraction
+
+Extract typed entities and relations from every chunk into `data/graph/extractions.jsonl`:
+
+```bash
+uv run python scripts/extract_graph.py
+```
+
+Each chunk goes through two schema-constrained LLM passes — entities first, then relations between
+those entities — validated against a fixed vocabulary of node and relation types. The run is
+**resumable**: it skips chunks already written, so re-running continues where it left off and picks
+up any that failed.
+
+> This is heavy on CPU — roughly 1–2 minutes per chunk, so the full corpus (~1.7k chunks) takes many
+> hours. Run it on an always-on machine (re-run after any interruption to finish), or extract a
+> subset. Requires the Ollama stack with `gemma3:4b`.
+
 ## Project layout
 
 ```
@@ -95,8 +113,10 @@ graphrag_wiki/          # reusable pipeline modules
   keyword.py            #   in-memory BM25 index
   fusion.py             #   Reciprocal Rank Fusion
   hybrid.py             #   fused vector + BM25 retrieval
+  graph_schema.py       #   node and relation types for extraction
+  graph_extraction.py   #   two-pass entity/relation extraction via the LLM
   config.py             #   paths, model names, endpoints
-scripts/                # runnable entry points (download, ingest, search, ask)
+scripts/                # runnable entry points (download, ingest, search, ask, extract_graph)
 tests/                  # unit tests for the pure logic
 docker-compose.yml      # Qdrant + Neo4j + Ollama
 ```
