@@ -92,6 +92,21 @@ def test_validate_rejects_relation_with_wrong_endpoint_types():
     assert any("endpoint type violates schema" in reason for _, _, reason in rejects)
 
 
+def test_validate_accepts_organization_as_ruler_of_a_place():
+    raw = {
+        "entities": [
+            {"name": "Roman Empire", "type": "Organization", "description": "..."},
+            {"name": "Britain", "type": "Place", "description": "..."},
+        ],
+        "relations": [
+            {"source": "Roman Empire", "relation": "RULED", "target": "Britain", "description": "..."},
+        ],
+    }
+    _, relations, rejects = validate(raw)
+    assert [r["relation"] for r in relations] == ["RULED"]
+    assert rejects == []
+
+
 def test_validate_rejects_relation_referencing_undeclared_entity():
     raw = {
         "entities": [{"name": "Caracalla", "type": "Person", "description": "..."}],

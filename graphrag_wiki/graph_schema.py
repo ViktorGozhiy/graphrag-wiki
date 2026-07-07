@@ -20,9 +20,9 @@ ANY = list(NODE_TYPES)
 
 RELATION_TYPES = {
     "RULED": {
-        "sources": ["Person"],
+        "sources": ["Person", "Organization"],
         "targets": ["Place", "Organization"],
-        "description": "The person governed or held authority over the place or body.",
+        "description": "The person or body governed or held authority over the place or body.",
     },
     "MEMBER_OF": {
         "sources": ["Person"],
