@@ -5,9 +5,25 @@ from graphrag_wiki.graph_extraction import (
     build_entity_prompt,
     build_relation_prompt,
     relation_format,
+    sanitize_entities,
     validate,
 )
 from graphrag_wiki.graph_schema import RELATION_TYPES
+
+
+def test_sanitize_entities_strips_quotes_that_break_strict_enums():
+    # A double quote in an entity name is rejected inside a strict-mode schema enum,
+    # so it must be removed before the name feeds relation_format's source/target enum.
+    entities = [
+        {"name": 'The "Good" Emperor', "type": "Person", "description": "..."},
+        {"name": "  Rome  ", "type": "Place", "description": "..."},
+    ]
+    cleaned = sanitize_entities(entities)
+    assert [e["name"] for e in cleaned] == ["The Good Emperor", "Rome"]
+    enum = relation_format([e["name"] for e in cleaned])["properties"]["relations"]["items"][
+        "properties"
+    ]["source"]["enum"]
+    assert all('"' not in value for value in enum)
 
 
 def test_entity_prompt_embeds_node_types_and_passage():

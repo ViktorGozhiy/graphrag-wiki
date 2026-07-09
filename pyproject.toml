@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastembed>=0.8.0",
+    "openai>=2.44.0",
+    "python-dotenv>=1.2.2",
     "qdrant-client>=1.18.0",
     "rank-bm25>=0.2.2",
     "requests>=2.34.2",

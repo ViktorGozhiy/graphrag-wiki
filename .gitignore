@@ -8,3 +8,10 @@ __pycache__/
 
 # local session artifacts
 .claude/
+
+# extraction run log
+/extract.log
+
+# secrets — never commit API keys
+.env
+.env.*

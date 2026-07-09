@@ -6,7 +6,7 @@ implemented transparently so the mechanics are easy to read and compare.
 
 **Current state:** a working baseline RAG — hybrid retrieval (dense vectors + BM25 fused with
 Reciprocal Rank Fusion) feeding a locally-run LLM that answers with citations. Knowledge-graph
-extraction (typed entities and relations per chunk) is implemented and runs through the same LLM.
+extraction (typed entities and relations per chunk) is implemented on the OpenAI API.
 **Planned next:** load the extracted graph into Neo4j and add graph-aware retrieval — the "Graph"
 in GraphRAG. Neo4j already runs in the stack for that step.
 
@@ -35,7 +35,8 @@ so results can be compared fairly and fused.
 - [uv](https://docs.astral.sh/uv/) — environment and dependency management (Python 3.12)
 - [Qdrant](https://qdrant.tech/) — vector store
 - [Neo4j](https://neo4j.com/) — graph store (for the planned graph step)
-- [Ollama](https://ollama.com/) — local LLM serving (`gemma3:4b` by default)
+- [Ollama](https://ollama.com/) — local LLM serving for RAG answers (`gemma3:4b` by default)
+- [OpenAI API](https://platform.openai.com/) — `gpt-4.1-mini` for graph extraction (Structured Outputs)
 - [fastembed](https://github.com/qdrant/fastembed) with `BAAI/bge-small-en-v1.5` — embeddings
 - [rank-bm25](https://github.com/dorianbrown/rank_bm25) — keyword retrieval
 
@@ -87,20 +88,21 @@ uv run python scripts/ask.py "why did the western roman empire fall"
 
 ## Knowledge graph extraction
 
-Extract typed entities and relations from every chunk into `data/graph/extractions.jsonl`:
+Extract typed entities and relations from every chunk into `data/graph/extractions.jsonl`. This runs
+on the OpenAI API (`gpt-4.1-mini`) using Structured Outputs, so both passes return schema-valid JSON.
+Put your key in a `.env` at the repo root (it is git-ignored):
 
 ```bash
-uv run python scripts/extract_graph.py
+echo "OPENAI_API_KEY=sk-..." > .env
+bash scripts/run_extraction.sh     # extracts the whole corpus, resuming after any stop
 ```
 
 Each chunk goes through two schema-constrained LLM passes — entities first, then relations between
-those entities — validated against a fixed vocabulary of node and relation types. The run is
-**resumable**: it skips chunks already written, so re-running continues where it left off and picks
-up any that failed.
-
-> This is heavy on CPU — roughly 1–2 minutes per chunk, so the full corpus (~1.7k chunks) takes many
-> hours. Run it on an always-on machine (re-run after any interruption to finish), or extract a
-> subset. Requires the Ollama stack with `gemma3:4b`.
+those entities — validated against a fixed vocabulary of node and relation types. Chunks are
+extracted concurrently, so the full corpus finishes in about an hour. The run is **resumable**: it
+skips chunks already written, so re-running continues where it left off and picks up any that failed.
+`run_extraction.sh` wraps `extract_graph.py` (one pass) in a resume loop; use the inner script
+directly if you prefer to drive it yourself.
 
 ## Project layout
 
@@ -116,7 +118,7 @@ graphrag_wiki/          # reusable pipeline modules
   graph_schema.py       #   node and relation types for extraction
   graph_extraction.py   #   two-pass entity/relation extraction via the LLM
   config.py             #   paths, model names, endpoints
-scripts/                # runnable entry points (download, ingest, search, ask, extract_graph)
+scripts/                # runnable entry points (download, ingest, search, ask, extract_graph, run_extraction)
 tests/                  # unit tests for the pure logic
 docker-compose.yml      # Qdrant + Neo4j + Ollama
 ```

@@ -1,14 +1,22 @@
 # ABOUTME: Batch-extracts the knowledge graph from every corpus chunk into a JSONL file.
-# ABOUTME: Resumable — skips chunks already written — so a long CPU run survives interruptions.
+# ABOUTME: Resumable (skips chunks already written) and concurrent, so the full corpus finishes fast.
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from graphrag_wiki.config import CORPUS_PATH
 from graphrag_wiki.corpus import iter_chunks, load_corpus
 from graphrag_wiki.graph_extraction import extract
 
 OUTPUT_PATH = "data/graph/extractions.jsonl"
+
+# Extraction is network-bound, so many chunks run against the API at once.
+MAX_WORKERS = 12
+
+# Bail out when the endpoint is clearly dead (e.g. quota exhausted): many failures
+# and nothing succeeding, so there is no point working through the rest.
+FAILURE_ABORT = 20
 
 
 def done_chunk_ids(path):
@@ -26,18 +34,32 @@ def main():
     pending = [chunk for chunk in chunks if chunk["chunk_id"] not in done]
     print(f"chunks: {len(chunks)}  done: {len(done)}  pending: {len(pending)}", flush=True)
 
-    with open(OUTPUT_PATH, "a", encoding="utf-8") as out:
-        for index, chunk in enumerate(pending, 1):
+    successes = 0
+    failures = 0
+    with open(OUTPUT_PATH, "a", encoding="utf-8") as out, ThreadPoolExecutor(MAX_WORKERS) as pool:
+        futures = {pool.submit(extract, chunk["chunk_id"], chunk["text"]): chunk for chunk in pending}
+        for index, future in enumerate(as_completed(futures), 1):
+            chunk = futures[future]
             chunk_id = chunk["chunk_id"]
             try:
-                result = extract(chunk_id, chunk["text"])
+                result = future.result()
             except Exception as error:
+                failures += 1
                 print(
                     f"[{index}/{len(pending)}] {chunk_id} FAILED "
-                    f"({type(error).__name__}) — will retry on next run",
+                    f"({type(error).__name__}: {error}) — will retry on next run",
                     flush=True,
                 )
+                if successes == 0 and failures >= FAILURE_ABORT:
+                    print(
+                        f"{failures} failures and nothing extracted — endpoint down; stopping",
+                        flush=True,
+                    )
+                    for pending_future in futures:
+                        pending_future.cancel()
+                    break
                 continue
+            successes += 1
             out.write(
                 json.dumps(
                     {

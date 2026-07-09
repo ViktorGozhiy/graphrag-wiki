@@ -3,9 +3,9 @@
 
 import json
 
-import requests
+from openai import OpenAI
 
-from graphrag_wiki.config import OLLAMA_MODEL, OLLAMA_URL
+from graphrag_wiki.config import OPENAI_MODEL
 from graphrag_wiki.graph_schema import (
     NODE_TYPES,
     RELATION_TYPES,
@@ -50,10 +50,12 @@ ENTITY_FORMAT = {
                     "description": {"type": "string"},
                 },
                 "required": ["name", "type", "description"],
+                "additionalProperties": False,
             },
         },
     },
     "required": ["entities"],
+    "additionalProperties": False,
 }
 
 
@@ -73,10 +75,12 @@ def relation_format(entity_names):
                         "description": {"type": "string"},
                     },
                     "required": ["source", "relation", "target", "description"],
+                    "additionalProperties": False,
                 },
             },
         },
         "required": ["relations"],
+        "additionalProperties": False,
     }
 
 
@@ -132,34 +136,57 @@ def validate(raw):
 
 GENERATE_ATTEMPTS = 3
 
+_CLIENT = None
+
+
+def _client():
+    """A lazily-created client so importing this module needs no API key.
+
+    The client retries transient errors (429/5xx) with backoff and caps each attempt
+    with a request timeout.
+    """
+    global _CLIENT
+    if _CLIENT is None:
+        _CLIENT = OpenAI(max_retries=5, timeout=120)
+    return _CLIENT
+
 
 def _generate(prompt, output_format):
     # Temperature 0 gives clean, deterministic JSON; a repeat would reproduce a decode
     # failure verbatim, so retries warm up slightly to escape a malformed generation.
     error = None
     for attempt in range(GENERATE_ATTEMPTS):
-        response = requests.post(
-            f"{OLLAMA_URL}/api/generate",
-            json={
-                "model": OLLAMA_MODEL,
-                "prompt": prompt,
-                "format": output_format,
-                "stream": False,
-                "options": {"temperature": 0 if attempt == 0 else 0.4},
+        response = _client().chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0 if attempt == 0 else 0.4,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "graph_extraction", "strict": True, "schema": output_format},
             },
-            timeout=900,
         )
-        response.raise_for_status()
         try:
-            return json.loads(response.json()["response"])
+            return json.loads(response.choices[0].message.content)
         except json.JSONDecodeError as decode_error:
             error = decode_error
     raise error
 
 
+def sanitize_entities(entities):
+    """Strip characters a strict-mode schema enum forbids (a double quote) from entity names.
+
+    The names become relation_format's source/target enum, so a raw " in a name makes the
+    pass-two schema invalid. Cleaning here keeps the names, that enum, the pass-two prompt,
+    and validation all consistent.
+    """
+    for entity in entities:
+        entity["name"] = entity.get("name", "").replace('"', "").strip()
+    return entities
+
+
 def extract(chunk_id, text):
     """Extract validated entities and relations from one chunk in two passes."""
-    entities = _generate(build_entity_prompt(text), ENTITY_FORMAT).get("entities", [])
+    entities = sanitize_entities(_generate(build_entity_prompt(text), ENTITY_FORMAT).get("entities", []))
     names = list(dict.fromkeys(e["name"].strip() for e in entities if e.get("name", "").strip()))
 
     relations = []
