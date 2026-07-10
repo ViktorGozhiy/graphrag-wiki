@@ -44,7 +44,8 @@ def node_degrees():
     driver = graph_store.driver()
     with driver.session() as session:
         for r in session.run(
-            "MATCH (n:Entity) RETURN n.name AS name, n.type AS type, COUNT{(n)--()} AS deg"
+            "MATCH (n:Entity) RETURN n.name AS name, n.type AS type, "
+            "COUNT{(n)-[r]-() WHERE type(r) <> 'SAME_AS'} AS deg"
         ):
             degree[(r["name"], r["type"])] = r["deg"]
     driver.close()
