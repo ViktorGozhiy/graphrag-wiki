@@ -36,6 +36,35 @@ def ensure_indexes(session):
     session.run("CREATE INDEX entity_name_type IF NOT EXISTS FOR (n:Entity) ON (n.name, n.type)")
 
 
+_LINK_SAME_AS = (
+    "MATCH (s:Entity {name: $source_name, type: $source_type}) "
+    "MATCH (t:Entity {name: $target_name, type: $target_type}) "
+    "MERGE (s)-[r:SAME_AS]->(t) SET r.canonical = $canonical"
+)
+
+
+def link_same_as(links, session):
+    """Link resolved duplicates with a SAME_AS edge carrying the chosen canonical name.
+
+    Each link is {"a": {name, type}, "b": {name, type}, "canonical": name}. Endpoints are
+    ordered before MERGE so the edge is stored once regardless of pair order — re-running
+    updates the same edge rather than adding a mirror. Returns the number of links written.
+    """
+    for link in links:
+        source, target = sorted(
+            [(link["a"]["name"], link["a"]["type"]), (link["b"]["name"], link["b"]["type"])]
+        )
+        session.run(
+            _LINK_SAME_AS,
+            source_name=source[0],
+            source_type=source[1],
+            target_name=target[0],
+            target_type=target[1],
+            canonical=link["canonical"],
+        )
+    return len(links)
+
+
 def load_records(records, session):
     """Upsert entities as typed nodes and relations as typed edges, accumulating chunk_id provenance.
 

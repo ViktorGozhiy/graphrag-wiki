@@ -86,3 +86,26 @@ def test_idempotent_and_provenance_accumulates(session):
     ).single()["c"]
     assert count == 1
     assert _node(session, "Rome") == {"type": "Place", "chunk_ids": {"1:0", "2:0"}}
+
+
+def test_link_same_as_is_a_single_idempotent_edge_carrying_the_canonical(session):
+    graph_store.load_records(
+        [_record("1:0", [_ent("Caracalla", "Person"), _ent("Emperor Caracalla", "Person")], [])],
+        session,
+    )
+    link = {
+        "a": {"name": PFX + "Caracalla", "type": "Person"},
+        "b": {"name": PFX + "Emperor Caracalla", "type": "Person"},
+        "canonical": PFX + "Caracalla",
+    }
+    graph_store.link_same_as([link], session)
+    # re-linking, even with endpoints reversed, must not create a second edge
+    graph_store.link_same_as([{"a": link["b"], "b": link["a"], "canonical": link["canonical"]}], session)
+
+    rows = session.run(
+        "MATCH (:Entity {name:$a})-[r:SAME_AS]-(:Entity {name:$b}) RETURN r.canonical AS canonical",
+        a=PFX + "Caracalla",
+        b=PFX + "Emperor Caracalla",
+    ).data()
+    assert len(rows) == 1
+    assert rows[0]["canonical"] == PFX + "Caracalla"
