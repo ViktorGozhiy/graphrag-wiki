@@ -13,6 +13,9 @@ VECTOR_SIZE = 384
 QDRANT_URL = "http://localhost:6333"
 QDRANT_COLLECTION = "wiki_chunks"
 
+NEO4J_URL = "bolt://localhost:7687"
+NEO4J_AUTH = ("neo4j", "graphragdev")  # local throwaway dev credentials, not a secret
+
 OLLAMA_URL = "http://localhost:11434"
 OLLAMA_MODEL = "gemma3:4b"
 
