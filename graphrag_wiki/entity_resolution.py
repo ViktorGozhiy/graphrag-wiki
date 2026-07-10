@@ -6,6 +6,8 @@ import re
 
 import numpy as np
 
+from graphrag_wiki import llm
+
 # Titles and particles that do not identify a specific entity, so two names that differ
 # only by these should still block together ("Emperor Caracalla" ~ "Caracalla").
 _NAME_STOPWORDS = frozenset(
@@ -72,3 +74,52 @@ def candidate_pairs(name_pairs, emb_pairs, hubs):
     """Union the two blockers, keeping only pairs where at least one endpoint is a hub."""
     hubs = set(hubs)
     return {pair for pair in name_pairs | emb_pairs if pair[0] in hubs or pair[1] in hubs}
+
+
+MAX_DESCRIPTIONS = 3
+
+DECISION_FORMAT = {
+    "type": "object",
+    "properties": {
+        "same": {"type": "boolean"},
+        "canonical_name": {"type": "string"},
+    },
+    "required": ["same", "canonical_name"],
+    "additionalProperties": False,
+}
+
+DECISION_PROMPT_TEMPLATE = (
+    "You resolve entities in a knowledge graph about ancient Rome. Decide whether the two "
+    "candidates below denote the SAME real-world {type} — the same individual, place, body, "
+    "event, law, or concept — not merely a related or similar one.\n\n"
+    "Rules:\n"
+    "- The same entity written differently IS the same: 'Caracalla' = 'Emperor Caracalla', "
+    "'Octavian' = 'Augustus'.\n"
+    "- Different individuals sharing a name or era are NOT the same: 'Theodosius I' is not "
+    "'Theodosius II', 'Augustus' (Octavian) is not 'Romulus Augustus', and a whole is not its part.\n"
+    "- When unsure, answer not the same.\n\n"
+    "Candidate A: {a_name}\n{a_desc}\n\n"
+    "Candidate B: {b_name}\n{b_desc}\n\n"
+    "If they are the same, set same=true and canonical_name to the fullest, most standard name. "
+    "If not, set same=false and canonical_name to an empty string."
+)
+
+
+def _describe(node):
+    return "\n".join(f"- {desc}" for desc in node["descriptions"][:MAX_DESCRIPTIONS])
+
+
+def build_decision_prompt(a, b):
+    """Prompt asking whether two candidate nodes denote the same real-world entity."""
+    return DECISION_PROMPT_TEMPLATE.format(
+        type=a["type"],
+        a_name=a["name"],
+        a_desc=_describe(a),
+        b_name=b["name"],
+        b_desc=_describe(b),
+    )
+
+
+def decide_same(a, b):
+    """Ask the model whether two candidate nodes are the same entity; returns {same, canonical_name}."""
+    return llm.generate(build_decision_prompt(a, b), DECISION_FORMAT, "entity_resolution")

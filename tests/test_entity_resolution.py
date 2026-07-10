@@ -2,6 +2,8 @@
 # ABOUTME: Covers name normalization, honorific-stripped tokens, and token blocking with a block-size cap.
 
 from graphrag_wiki.entity_resolution import (
+    DECISION_FORMAT,
+    build_decision_prompt,
     candidate_pairs,
     embedding_pairs,
     name_tokens,
@@ -70,3 +72,26 @@ def test_candidate_pairs_union_filtered_to_hub_endpoints():
     assert candidate_pairs(name_pairs, emb_pairs, hubs={0}) == {(0, 1)}
     # hub = node 1: both pairs touch it.
     assert candidate_pairs(name_pairs, emb_pairs, hubs={1}) == {(0, 1), (1, 2)}
+
+
+def test_decision_format_is_strict():
+    assert DECISION_FORMAT["additionalProperties"] is False
+    assert set(DECISION_FORMAT["required"]) == {"same", "canonical_name"}
+
+
+def test_decision_prompt_includes_names_type_and_descriptions():
+    a = {"name": "Caracalla", "type": "Person", "descriptions": ["Roman emperor.", "Son of Severus."]}
+    b = {"name": "Emperor Caracalla", "type": "Person", "descriptions": ["Issued the edict of 212."]}
+    prompt = build_decision_prompt(a, b)
+    assert "Caracalla" in prompt and "Emperor Caracalla" in prompt
+    assert "Person" in prompt
+    assert "Roman emperor." in prompt and "Issued the edict of 212." in prompt
+    assert "canonical_name" in prompt
+
+
+def test_decision_prompt_caps_descriptions():
+    a = {"name": "X", "type": "Concept", "descriptions": [f"desc{i}" for i in range(10)]}
+    b = {"name": "Y", "type": "Concept", "descriptions": ["z"]}
+    prompt = build_decision_prompt(a, b)
+    assert "desc0" in prompt and "desc2" in prompt
+    assert "desc3" not in prompt  # capped at MAX_DESCRIPTIONS

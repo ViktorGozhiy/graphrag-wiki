@@ -1,11 +1,7 @@
 # ABOUTME: Extracts typed entities then relations from a chunk via two schema-constrained LLM calls.
 # ABOUTME: Pass two restricts relation endpoints to the entities pass one declared, then validates triples.
 
-import json
-
-from openai import OpenAI
-
-from graphrag_wiki.config import OPENAI_MODEL
+from graphrag_wiki import llm
 from graphrag_wiki.graph_schema import (
     NODE_TYPES,
     RELATION_TYPES,
@@ -134,44 +130,6 @@ def validate(raw):
     return entities, relations, rejects
 
 
-GENERATE_ATTEMPTS = 3
-
-_CLIENT = None
-
-
-def _client():
-    """A lazily-created client so importing this module needs no API key.
-
-    The client retries transient errors (429/5xx) with backoff and caps each attempt
-    with a request timeout.
-    """
-    global _CLIENT
-    if _CLIENT is None:
-        _CLIENT = OpenAI(max_retries=5, timeout=120)
-    return _CLIENT
-
-
-def _generate(prompt, output_format):
-    # Temperature 0 gives clean, deterministic JSON; a repeat would reproduce a decode
-    # failure verbatim, so retries warm up slightly to escape a malformed generation.
-    error = None
-    for attempt in range(GENERATE_ATTEMPTS):
-        response = _client().chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0 if attempt == 0 else 0.4,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {"name": "graph_extraction", "strict": True, "schema": output_format},
-            },
-        )
-        try:
-            return json.loads(response.choices[0].message.content)
-        except json.JSONDecodeError as decode_error:
-            error = decode_error
-    raise error
-
-
 def sanitize_entities(entities):
     """Strip characters a strict-mode schema enum forbids (a double quote) from entity names.
 
@@ -186,12 +144,14 @@ def sanitize_entities(entities):
 
 def extract(chunk_id, text):
     """Extract validated entities and relations from one chunk in two passes."""
-    entities = sanitize_entities(_generate(build_entity_prompt(text), ENTITY_FORMAT).get("entities", []))
+    raw_entities = llm.generate(build_entity_prompt(text), ENTITY_FORMAT, "graph_extraction")
+    entities = sanitize_entities(raw_entities.get("entities", []))
     names = list(dict.fromkeys(e["name"].strip() for e in entities if e.get("name", "").strip()))
 
     relations = []
     if names:
-        raw_relations = _generate(build_relation_prompt(text, entities), relation_format(names))
+        prompt = build_relation_prompt(text, entities)
+        raw_relations = llm.generate(prompt, relation_format(names), "graph_extraction")
         relations = raw_relations.get("relations", [])
 
     entities, relations, rejects = validate({"entities": entities, "relations": relations})
