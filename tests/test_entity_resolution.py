@@ -1,7 +1,13 @@
 # ABOUTME: Tests for entity-resolution blocking — the cheap candidate-pair generation before the LLM decides.
 # ABOUTME: Covers name normalization, honorific-stripped tokens, and token blocking with a block-size cap.
 
-from graphrag_wiki.entity_resolution import name_tokens, normalize_name, token_block_pairs
+from graphrag_wiki.entity_resolution import (
+    candidate_pairs,
+    embedding_pairs,
+    name_tokens,
+    normalize_name,
+    token_block_pairs,
+)
 
 
 def test_normalize_lowercases_and_drops_punctuation():
@@ -43,3 +49,24 @@ def test_token_block_pairs_discards_oversized_generic_blocks():
     assert (0, 4) in pairs  # "Roman Empire" <-> "Empire" via the small "empire" block
     # no pair is created solely through the oversized "roman" block
     assert (1, 2) not in pairs and (2, 3) not in pairs and (1, 3) not in pairs
+
+
+def test_embedding_pairs_link_close_vectors_within_type():
+    vectors = [[1.0, 0.0], [1.0, 0.02], [0.0, 1.0]]
+    types = ["Concept", "Concept", "Concept"]
+    assert embedding_pairs(vectors, types, theta=0.9) == {(0, 1)}
+
+
+def test_embedding_pairs_never_cross_types():
+    vectors = [[1.0, 0.0], [1.0, 0.0]]
+    types = ["Concept", "Person"]
+    assert embedding_pairs(vectors, types, theta=0.9) == set()
+
+
+def test_candidate_pairs_union_filtered_to_hub_endpoints():
+    name_pairs = {(0, 1)}
+    emb_pairs = {(1, 2)}
+    # hub = node 0 only: (0,1) touches a hub and stays; (1,2) touches no hub and drops.
+    assert candidate_pairs(name_pairs, emb_pairs, hubs={0}) == {(0, 1)}
+    # hub = node 1: both pairs touch it.
+    assert candidate_pairs(name_pairs, emb_pairs, hubs={1}) == {(0, 1), (1, 2)}

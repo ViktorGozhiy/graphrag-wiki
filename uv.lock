@@ -195,6 +195,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastembed" },
     { name = "neo4j" },
+    { name = "numpy" },
     { name = "openai" },
     { name = "python-dotenv" },
     { name = "qdrant-client" },
@@ -211,6 +212,7 @@ dev = [
 requires-dist = [
     { name = "fastembed", specifier = ">=0.8.0" },
     { name = "neo4j", specifier = ">=6.2.0" },
+    { name = "numpy", specifier = ">=2.5.1" },
     { name = "openai", specifier = ">=2.44.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "qdrant-client", specifier = ">=1.18.0" },
