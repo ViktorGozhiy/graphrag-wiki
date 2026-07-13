@@ -4,8 +4,11 @@
 import collections
 
 from graphrag_wiki import llm
+from graphrag_wiki.config import CORPUS_PATH
+from graphrag_wiki.corpus import iter_chunks, load_corpus
 from graphrag_wiki.entity_resolution import normalize_name
 from graphrag_wiki.graph_schema import NODE_TYPES
+from graphrag_wiki.vector import rank_by_query
 
 ENTITY_FORMAT = {
     "type": "object",
@@ -121,3 +124,17 @@ def candidate_chunk_ids(edges):
                 present.add(chunk_id)
                 ordered.append(chunk_id)
     return ordered
+
+
+def graph_passages(query, session, hops=2, cap=10, top_m=6):
+    """Return the top-m chunk records reached from the query's entities through the graph.
+
+    Names the question's entities with the model, links them to seed nodes, walks their
+    SAME_AS-expanded neighborhood for candidate provenance chunks, and reranks those by
+    relevance to the question. These bridge chunks stand apart from lexical/dense retrieval.
+    """
+    seeds = seeds_from_entities(extract_query_entities(query), session)
+    edges = neighborhood(list(seeds), session, hops=hops, cap=cap)
+    corpus = {chunk["chunk_id"]: chunk for chunk in iter_chunks(load_corpus(CORPUS_PATH))}
+    candidates = [corpus[chunk_id] for chunk_id in candidate_chunk_ids(edges) if chunk_id in corpus]
+    return rank_by_query(query, candidates)[:top_m]
