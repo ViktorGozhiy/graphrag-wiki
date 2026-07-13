@@ -1,15 +1,15 @@
 # ABOUTME: Tests for graph-aware retrieval — linking a question to graph nodes and traversing the neighborhood.
-# ABOUTME: Covers capitalized-span extraction, name-index matching, and SAME_AS-expanded traversal.
+# ABOUTME: Covers the entity-extraction prompt, name matching, SAME_AS-expanded traversal, and candidate chunks.
 
 import pytest
 
 from graphrag_wiki import graph_store
 from graphrag_wiki.graph_retrieval import (
-    capitalized_spans,
-    graph_chunk_ids,
+    build_entity_prompt,
+    candidate_chunk_ids,
     link_spans,
     neighborhood,
-    rank_chunks,
+    seeds_from_entities,
 )
 
 PFX = "Ztest "
@@ -38,23 +38,24 @@ def _rel(source, relation, target):
     return {"source": PFX + source, "relation": relation, "target": PFX + target, "description": relation}
 
 
-def test_capitalized_spans_extracts_consecutive_capitalized_runs():
-    spans = capitalized_spans("How did Emperor Caracalla issue the Antonine Constitution?")
-    assert spans == ["How", "Emperor Caracalla", "Antonine Constitution"]
+def test_build_entity_prompt_includes_the_question_and_node_types():
+    prompt = build_entity_prompt("How did citizenship affect taxation?")
+    assert "How did citizenship affect taxation?" in prompt
+    assert "concept" in prompt  # the node-type vocabulary steers the extraction
 
 
-def test_capitalized_spans_lowercase_words_break_runs():
-    assert capitalized_spans("the Roman Empire and its provinces") == ["Roman Empire"]
+def test_link_spans_matches_by_normalized_name():
+    nodes = [("Roman citizenship", "Concept"), ("Antonine Constitution", "Law"), ("citizenship", "Concept")]
+    assert link_spans(["roman citizenship", "Antonine Constitution"], nodes) == {
+        ("Roman citizenship", "Concept"),
+        ("Antonine Constitution", "Law"),
+    }
 
 
-def test_capitalized_spans_none_when_no_capitals():
-    assert capitalized_spans("how did citizenship affect taxation?") == []
-
-
-def test_link_spans_matches_by_content_tokens_ignoring_honorifics():
-    nodes = [("Caracalla", "Person"), ("Antonine Constitution", "Law"), ("citizenship", "Concept")]
-    spans = ["Emperor Caracalla", "Antonine Constitution"]
-    assert link_spans(spans, nodes) == {("Caracalla", "Person"), ("Antonine Constitution", "Law")}
+def test_link_spans_does_not_match_across_titles():
+    # "Roman emperor" must not collapse onto "Roman king" just because both carry a title
+    nodes = [("Roman emperor", "Person"), ("Roman king", "Person")]
+    assert link_spans(["Roman emperor"], nodes) == {("Roman emperor", "Person")}
 
 
 def test_link_spans_returns_all_nodes_sharing_a_name():
@@ -63,17 +64,12 @@ def test_link_spans_returns_all_nodes_sharing_a_name():
 
 
 def test_link_spans_ignores_unmatched_spans():
-    assert link_spans(["How", "Nero"], [("Caracalla", "Person")]) == set()
+    assert link_spans(["Which", "Nero"], [("Caracalla", "Person")]) == set()
 
 
-def test_rank_chunks_orders_by_nearest_hop_then_edge_frequency():
-    edges = [
-        {"hop": 2, "chunk_ids": ["far"]},
-        {"hop": 1, "chunk_ids": ["near", "shared"]},
-        {"hop": 1, "chunk_ids": ["shared"]},
-    ]
-    # shared: hop 1, on 2 edges; near: hop 1, on 1 edge; far: hop 2
-    assert rank_chunks(edges) == ["shared", "near", "far"]
+def test_candidate_chunk_ids_are_distinct_and_preserve_first_seen_order():
+    edges = [{"chunk_ids": ["a", "b"]}, {"chunk_ids": ["b", "c"]}]
+    assert candidate_chunk_ids(edges) == ["a", "b", "c"]
 
 
 def test_neighborhood_collects_one_hop_edge_with_provenance(session):
@@ -148,22 +144,14 @@ def test_neighborhood_caps_edges_per_node_beyond_the_first_hop(session):
     assert len([e for e in edges if e["hop"] == 2]) == 2  # B's five neighbors capped to two
 
 
-def test_graph_chunk_ids_links_query_traverses_and_ranks_bridge_first(session):
+def test_seeds_from_entities_matches_named_entities_to_nodes(session):
     graph_store.load_records(
-        [
-            _record(
-                "bridge",
-                [_ent("Caracalla", "Person"), _ent("citizenship", "Concept")],
-                [_rel("Caracalla", "GRANTED", "citizenship")],
-            ),
-            _record(
-                "far",
-                [_ent("citizenship", "Concept"), _ent("Taxation", "Concept")],
-                [_rel("citizenship", "INFLUENCED", "Taxation")],
-            ),
-        ],
+        [_record(
+            "c0",
+            [_ent("Roman citizenship", "Concept"), _ent("Caracalla", "Person")],
+            [_rel("Caracalla", "GRANTED", "Roman citizenship")],
+        )],
         session,
     )
-    ids = graph_chunk_ids(f"How did {PFX}Caracalla and citizenship affect taxation?", session, hops=2)
-    assert ids[0] == "bridge"  # the hop-1 edge's provenance outranks the hop-2 chunk
-    assert "far" in ids  # the hop-2 chunk is still reached
+    seeds = seeds_from_entities([PFX + "Roman citizenship", PFX + "nobody"], session)
+    assert seeds == {(PFX + "Roman citizenship", "Concept")}

@@ -1,40 +1,60 @@
 # ABOUTME: Graph-aware retrieval — links a question to graph nodes and gathers evidence from their neighborhood.
-# ABOUTME: Seeds from capitalized spans in the question, then traverses SAME_AS-expanded edges for bridge chunks.
+# ABOUTME: An LLM names the question's entities; their SAME_AS-expanded neighborhood yields candidate bridge chunks.
 
 import collections
-import re
 
-from graphrag_wiki.entity_resolution import name_tokens
+from graphrag_wiki import llm
+from graphrag_wiki.entity_resolution import normalize_name
+from graphrag_wiki.graph_schema import NODE_TYPES
 
-_SPAN = re.compile(r"[A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*)*")
+ENTITY_FORMAT = {
+    "type": "object",
+    "properties": {"entities": {"type": "array", "items": {"type": "string"}}},
+    "required": ["entities"],
+    "additionalProperties": False,
+}
+
+ENTITY_PROMPT_TEMPLATE = (
+    "List the entities this question about ancient Rome is asking about, so they can be "
+    "looked up by name in a knowledge graph. Cover people, places, organizations, events, "
+    "laws, and concepts ({types}) — both those named outright and those the question clearly "
+    "implies. Give each as its shortest standalone name.\n\n"
+    "Question: {query}"
+)
 
 
-def capitalized_spans(query):
-    """Return maximal runs of consecutive capitalized words in the query.
+def build_entity_prompt(query):
+    """Prompt asking the model to name the entities and concepts a question is about."""
+    return ENTITY_PROMPT_TEMPLATE.format(query=query, types=", ".join(NODE_TYPES).lower())
 
-    Sentence-initial words ("How") are included; they simply fail to match any node
-    when the spans are looked up against the graph, so no stopword list is needed.
-    """
-    return _SPAN.findall(query)
+
+def extract_query_entities(query):
+    """Ask the model which entities and concepts the question is about."""
+    return llm.generate(build_entity_prompt(query), ENTITY_FORMAT, "graph_retrieval")["entities"]
 
 
 def link_spans(spans, nodes):
-    """Return the (name, type) nodes whose content tokens match a span in the query.
+    """Return the (name, type) nodes whose normalized name equals one of the spans.
 
-    nodes is a list of (name, type). Both sides are keyed by honorific-stripped content
-    tokens, so "Emperor Caracalla" links to the node "Caracalla". A name shared by nodes
-    of different types links all of them; spans matching nothing are dropped.
+    nodes is a list of (name, type). Matching is on the normalized name, so case and
+    punctuation are ignored but distinct names stay distinct — "Roman emperor" does not
+    collapse onto "Roman king". A name shared by nodes of different types links all of
+    them; spans matching nothing are dropped.
     """
     index = collections.defaultdict(list)
     for name, node_type in nodes:
-        tokens = name_tokens(name)
-        if tokens:
-            index[tokens].append((name, node_type))
+        index[normalize_name(name)].append((name, node_type))
 
     matched = set()
     for span in spans:
-        matched.update(index.get(name_tokens(span), []))
+        matched.update(index.get(normalize_name(span), []))
     return matched
+
+
+def seeds_from_entities(entities, session):
+    """Match the extracted entity names to seed (name, type) nodes in the graph."""
+    nodes = [(row["name"], row["type"]) for row in session.run("MATCH (n:Entity) RETURN n.name AS name, n.type AS type")]
+    return link_spans(entities, nodes)
 
 
 # Typed edges of a node and all its SAME_AS variants (variants act as one logical node);
@@ -91,33 +111,13 @@ def neighborhood(seeds, session, hops=2, cap=10):
     return edges
 
 
-def rank_chunks(edges):
-    """Order the provenance chunk_ids of traversed edges by relevance to the query.
-
-    A chunk ranks higher the nearer to the seeds it was reached (shallowest hop) and the
-    more edges in the neighborhood cite it (more connective). The chunk_id breaks ties so
-    the order is stable.
-    """
-    nearest = {}
-    frequency = {}
+def candidate_chunk_ids(edges):
+    """The distinct provenance chunk_ids of the traversed edges, in first-seen order."""
+    ordered = []
+    present = set()
     for edge in edges:
         for chunk_id in edge["chunk_ids"]:
-            nearest[chunk_id] = min(nearest.get(chunk_id, edge["hop"]), edge["hop"])
-            frequency[chunk_id] = frequency.get(chunk_id, 0) + 1
-    return sorted(nearest, key=lambda chunk_id: (nearest[chunk_id], -frequency[chunk_id], chunk_id))
-
-
-def link_query(query, session):
-    """Link the capitalized spans in the query to seed (name, type) nodes in the graph."""
-    nodes = [(row["name"], row["type"]) for row in session.run("MATCH (n:Entity) RETURN n.name AS name, n.type AS type")]
-    return link_spans(capitalized_spans(query), nodes)
-
-
-def graph_chunk_ids(query, session, hops=2, cap=10, limit=30):
-    """Chunk ids reached from the query's entities in the graph, ranked by relevance.
-
-    Links the query to seed nodes, walks their SAME_AS-expanded neighborhood, and ranks the
-    provenance chunk_ids so a graph traversal can act as a retriever alongside vector and BM25.
-    """
-    edges = neighborhood(link_query(query, session), session, hops=hops, cap=cap)
-    return rank_chunks(edges)[:limit]
+            if chunk_id not in present:
+                present.add(chunk_id)
+                ordered.append(chunk_id)
+    return ordered
