@@ -89,3 +89,35 @@ def neighborhood(seeds, session, hops=2, cap=10):
                     next_frontier.add(other)
         frontier = next_frontier
     return edges
+
+
+def rank_chunks(edges):
+    """Order the provenance chunk_ids of traversed edges by relevance to the query.
+
+    A chunk ranks higher the nearer to the seeds it was reached (shallowest hop) and the
+    more edges in the neighborhood cite it (more connective). The chunk_id breaks ties so
+    the order is stable.
+    """
+    nearest = {}
+    frequency = {}
+    for edge in edges:
+        for chunk_id in edge["chunk_ids"]:
+            nearest[chunk_id] = min(nearest.get(chunk_id, edge["hop"]), edge["hop"])
+            frequency[chunk_id] = frequency.get(chunk_id, 0) + 1
+    return sorted(nearest, key=lambda chunk_id: (nearest[chunk_id], -frequency[chunk_id], chunk_id))
+
+
+def link_query(query, session):
+    """Link the capitalized spans in the query to seed (name, type) nodes in the graph."""
+    nodes = [(row["name"], row["type"]) for row in session.run("MATCH (n:Entity) RETURN n.name AS name, n.type AS type")]
+    return link_spans(capitalized_spans(query), nodes)
+
+
+def graph_chunk_ids(query, session, hops=2, cap=10, limit=30):
+    """Chunk ids reached from the query's entities in the graph, ranked by relevance.
+
+    Links the query to seed nodes, walks their SAME_AS-expanded neighborhood, and ranks the
+    provenance chunk_ids so a graph traversal can act as a retriever alongside vector and BM25.
+    """
+    edges = neighborhood(link_query(query, session), session, hops=hops, cap=cap)
+    return rank_chunks(edges)[:limit]

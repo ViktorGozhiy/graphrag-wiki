@@ -4,9 +4,15 @@
 import pytest
 
 from graphrag_wiki import graph_store
-from graphrag_wiki.graph_retrieval import capitalized_spans, link_spans, neighborhood
+from graphrag_wiki.graph_retrieval import (
+    capitalized_spans,
+    graph_chunk_ids,
+    link_spans,
+    neighborhood,
+    rank_chunks,
+)
 
-PFX = "zzz_test_"
+PFX = "Ztest "
 
 
 @pytest.fixture
@@ -58,6 +64,16 @@ def test_link_spans_returns_all_nodes_sharing_a_name():
 
 def test_link_spans_ignores_unmatched_spans():
     assert link_spans(["How", "Nero"], [("Caracalla", "Person")]) == set()
+
+
+def test_rank_chunks_orders_by_nearest_hop_then_edge_frequency():
+    edges = [
+        {"hop": 2, "chunk_ids": ["far"]},
+        {"hop": 1, "chunk_ids": ["near", "shared"]},
+        {"hop": 1, "chunk_ids": ["shared"]},
+    ]
+    # shared: hop 1, on 2 edges; near: hop 1, on 1 edge; far: hop 2
+    assert rank_chunks(edges) == ["shared", "near", "far"]
 
 
 def test_neighborhood_collects_one_hop_edge_with_provenance(session):
@@ -130,3 +146,24 @@ def test_neighborhood_caps_edges_per_node_beyond_the_first_hop(session):
     edges = neighborhood([(PFX + "A", "Person")], session, hops=2, cap=2)
     assert len([e for e in edges if e["hop"] == 1]) == 1  # the single seed edge is never capped
     assert len([e for e in edges if e["hop"] == 2]) == 2  # B's five neighbors capped to two
+
+
+def test_graph_chunk_ids_links_query_traverses_and_ranks_bridge_first(session):
+    graph_store.load_records(
+        [
+            _record(
+                "bridge",
+                [_ent("Caracalla", "Person"), _ent("citizenship", "Concept")],
+                [_rel("Caracalla", "GRANTED", "citizenship")],
+            ),
+            _record(
+                "far",
+                [_ent("citizenship", "Concept"), _ent("Taxation", "Concept")],
+                [_rel("citizenship", "INFLUENCED", "Taxation")],
+            ),
+        ],
+        session,
+    )
+    ids = graph_chunk_ids(f"How did {PFX}Caracalla and citizenship affect taxation?", session, hops=2)
+    assert ids[0] == "bridge"  # the hop-1 edge's provenance outranks the hop-2 chunk
+    assert "far" in ids  # the hop-2 chunk is still reached
